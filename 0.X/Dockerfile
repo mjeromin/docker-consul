@@ -1,43 +1,39 @@
+FROM golang:1.10.3-alpine3.8 as build
+
+
+ENV BUILD_ROOT="$GOPATH/src/github.com/hashicorp"
+ENV BUILD_TAG="v1.2.2"
+
+# tput requirement
+ENV TERM=dumb
+
+RUN set -x && \
+    apk update && \
+    apk add --no-cache \
+    bash \
+    git \
+    make \
+    ncurses && \
+    mkdir -p $BUILD_ROOT && cd $BUILD_ROOT && \
+    git clone -b $BUILD_TAG https://github.com/hashicorp/consul.git && cd consul && \
+    make tools && make linux && \
+    # tiny smoke test to ensure the binary we built runs
+    /go/bin/consul -v
+
 FROM alpine:3.7
-MAINTAINER Preetha Appan <preetha@hashicorp.com> (@preetapan)
-
-# This is the release of Consul to pull in.
-ENV CONSUL_VERSION=1.2.2
-
-# This is the location of the releases.
-ENV HASHICORP_RELEASES=https://releases.hashicorp.com
+LABEL maintainer="Mark Jeromin <mark.jeromin@sysfrog.net>"
 
 # Create a consul user and group first so the IDs get set the same way, even as
 # the rest of this may change over time.
-RUN addgroup consul && \
+RUN set -x && \
+    addgroup consul && \
     adduser -S -G consul consul
 
 # Set up certificates, base tools, and Consul.
 RUN set -eux && \
-    apk add --no-cache ca-certificates curl dumb-init gnupg libcap openssl su-exec && \
-    gpg --keyserver pgp.mit.edu --recv-keys 91A6E7F85D05C65630BEF18951852D87348FFC4C && \
-    mkdir -p /tmp/build && \
-    cd /tmp/build && \
-    apkArch="$(apk --print-arch)" && \
-    case "${apkArch}" in \
-        aarch64) consulArch='arm64' ;; \
-        armhf) consulArch='arm' ;; \
-        x86) consulArch='386' ;; \
-        x86_64) consulArch='amd64' ;; \
-        *) echo >&2 "error: unsupported architecture: ${apkArch} (see ${HASHICORP_RELEASES}/consul/${CONSUL_VERSION}/)" && exit 1 ;; \
-    esac && \
-    wget ${HASHICORP_RELEASES}/consul/${CONSUL_VERSION}/consul_${CONSUL_VERSION}_linux_${consulArch}.zip && \
-    wget ${HASHICORP_RELEASES}/consul/${CONSUL_VERSION}/consul_${CONSUL_VERSION}_SHA256SUMS && \
-    wget ${HASHICORP_RELEASES}/consul/${CONSUL_VERSION}/consul_${CONSUL_VERSION}_SHA256SUMS.sig && \
-    gpg --batch --verify consul_${CONSUL_VERSION}_SHA256SUMS.sig consul_${CONSUL_VERSION}_SHA256SUMS && \
-    grep consul_${CONSUL_VERSION}_linux_${consulArch}.zip consul_${CONSUL_VERSION}_SHA256SUMS | sha256sum -c && \
-    unzip -d /bin consul_${CONSUL_VERSION}_linux_${consulArch}.zip && \
-    cd /tmp && \
-    rm -rf /tmp/build && \
-    apk del gnupg openssl && \
-    rm -rf /root/.gnupg && \
-# tiny smoke test to ensure the binary we downloaded runs
-    consul version
+    apk add --no-cache ca-certificates dumb-init libcap openssl su-exec
+
+COPY --from=build /go/bin/consul /bin/consul
 
 # The /consul/data dir is used by Consul to store state. The agent will be started
 # with /consul/config as the configuration directory so you can add additional
@@ -70,7 +66,7 @@ EXPOSE 8500 8600 8600/udp
 # entry point script. The entry point script also uses dumb-init as the top-level
 # process to reap any zombie processes created by Consul sub-processes.
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-ENTRYPOINT ["docker-entrypoint.sh"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
 # By default you'll get an insecure single-node development server that stores
 # everything in RAM, exposes a web UI and HTTP endpoints, and bootstraps itself.
